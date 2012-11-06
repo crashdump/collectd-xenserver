@@ -15,27 +15,28 @@ Dependencies:
   - collectd python module: http://pypi.python.org/pypi/collectd
 
 collectd.conf example:
-    <LoadPlugin python>
-        Globals true
-    </LoadPlugin>
-
-    <Plugin python>
+  <Plugin python>
         ModulePath "/path/to/modules/"
         LogTraces true
         Interactive false
         Import "collectd-xenserver"
         <Module "collectd-xenserver">
-            Host "10.0.0.100"
-            User "root"
-            Password "mysecretpassword"
+              <Host "10.0.0.100">
+                    User "root"
+                    Password "mysecretpassword"
+              </Host>
+              <Host "10.0.0.101">>
+                    User "root"
+                    Password "mysecretpassword"
+              </Host>
         </Module>
-    </Plugin>
+  </Plugin>
 
 """
 __author__ = "Adrien Pujol - http://www.crashdump.fr/"
 __copyright__ = "Copyright 2012, Adrien Pujol"
 __license__ = "GPL"
-__version__ = "0.2"
+__version__ = "0.3"
 __email__ = "adrien.pujol@crashdump.fr"
 __status__ = "Development"
 
@@ -202,89 +203,106 @@ class GetRRDUdpates:
 
 class XenServerCollectd:
     def __init__(self):
-        self.url = "http://127.0.0.1"
-        self.user = "root"
-        self.passwd = "password"
-        self.verbose = False
+        self.hosts = {}
+        self.verbose = True
         self.graphHost = True
         self.rrdParams = {}
         self.rrdParams['cf'] = "AVERAGE"
         self.rrdParams['start'] = int(time.time()) - 10
         self.rrdParams['interval'] = 5
 
-    def SetConfig(self, conf):
-        for node in conf.children:
-            if node.key == 'Host':
-                self.url = "http://%s" % node.values[0]
-            elif node.key == 'User':
-                self.user = node.values[0]
-            elif node.key == 'Password':
-                self.passwd = node.values[0]
-            elif node.key == 'Verobse' :
-                self.verbose = bool(node.values[0])
 
-    def Send(self, uuid, metricsData, isHost):
+    def Connect(self):
+        for hostname in self.hosts.keys():
+            url    = self.hosts[hostname]['url']
+            user   = self.hosts[hostname]['user']
+            passwd = self.hosts[hostname]['passwd']
+            #
+            self._LogVerbose('Connecting: %s on %s' % (user, url))
+            self.hosts[hostname]['rrdupdates'] = GetRRDUdpates()
+            self.hosts[hostname]['session'] = XenAPI.Session(url)
+            self.hosts[hostname]['session'].xenapi.login_with_password(user, passwd)
+
+    def Config(self, conf):
+        if len(conf.children) == 0:
+            collectd.error('Module configuration missing')
+        #
+        for node in conf.children:
+            hostname = ''
+            user = ''
+            passwd = ''
+            if node.key == 'Host':
+                hostname = node.values[0]
+            for hostchild in node.children:
+                if hostchild.key == "User":
+                    user = hostchild.values[0]
+                elif hostchild.key == 'Password':
+                    passwd = hostchild.values[0]
+            self.hosts[hostname] = {'url': "http://%s" % hostname,'user': user, 'passwd': passwd}
+            self._LogVerbose('Reading new host from config: %s => %s' % (hostname, self.hosts[hostname]))
+
+    def Read(self):
+        for hostname in self.hosts.keys():
+            self._LogVerbose('Read(): %s' % self.hosts[hostname]['url'] )
+            self.hosts[hostname]['rrdupdates'].Refresh(self.hosts[hostname]['session'].handle, self.rrdParams, self.hosts[hostname]['url'])
+
+            if self.graphHost:
+                uuid = self.hosts[hostname]['rrdupdates'].GetHostUUID()
+                mectricsData = self._GetRows(hostname, uuid)
+                isHost = True
+                self._ToCollectd(hostname, uuid, mectricsData, isHost)
+
+            for uuid in self.hosts[hostname]['rrdupdates'].GetVMList():
+                mectricsData = self._GetRows(hostname, uuid)
+                isHost = False
+                self._ToCollectd(hostname, uuid, mectricsData, isHost)
+
+    def Shutdown(self):
+        for hostname in self.hosts.keys():
+            self._LogVerbose('Disconnecting %s ' % hostname)
+            self.hosts[hostname]['session'].logout()
+
+
+    def _ToCollectd(self, hostname, uuid, metricsData, isHost):
         if isHost:
-            hostname = 'xenserver-host-%s' % uuid
+            name = 'xenserver-host-%s' % uuid
         else:
-            hostname = 'xenserver-vm-%s' % uuid
+            name = 'xenserver-vm-%s' % uuid
 
         for key, value in metricsData.iteritems():
             cltd = collectd.Values();
             cltd.plugin = 'collectd-xenserver'
-            cltd.host = hostname
+            cltd.host = name
+            cltd.type_instance = key
             cltd.type = 'gauge' # http://linux.die.net/man/5/types.db
             cltd.values = [ value ]
-            self.LogVerbose('Dispatching %s.%s %s' % (hostname, key, value))
+            self._LogVerbose('Dispatching %s: %s.%s %s' % (hostname, name, key, value))
             cltd.dispatch()
 
-    def GetRows(self, uuid):
+    def _GetRows(self, hostname, uuid):
         result = {}
-        for param in self.rrdUpdates.GetHostParamList():
+        for param in self.hosts[hostname]['rrdupdates'].GetHostParamList():
                 if param != '':
                     max_time=0
                     data=''
-                    for row in range(self.rrdUpdates.GetRows()):
-                        epoch = self.rrdUpdates.GetRowTime(row)
-                        dv = str(self.rrdUpdates.GetHostData(param,row))
+                    for row in range(self.hosts[hostname]['rrdupdates'].GetRows()):
+                        epoch = self.hosts[hostname]['rrdupdates'].GetRowTime(row)
+                        dv = str(self.hosts[hostname]['rrdupdates'].GetHostData(param,row))
                         if epoch > max_time:
                             max_time = epoch
                             data = dv
                     result[param] = data
         return result
 
-    def Connect(self):
-        self.LogVerbose('Connecting: %s on %s' % (self.user, self.url))
-        self.rrdUpdates = GetRRDUdpates()
-        self.session = XenAPI.Session(self.url)
-        self.session.xenapi.login_with_password(self.user, self.passwd)
-
-    def Cycle(self):
-        self.rrdUpdates.Refresh(self.session.handle, self.rrdParams, self.url)
-
-        if self.graphHost:
-            uuid = self.rrdUpdates.GetHostUUID()
-            mectricsData = self.GetRows(uuid)
-            isHost = True
-            self.Send(uuid, mectricsData, isHost)
-
-        for uuid in self.rrdUpdates.GetVMList():
-            mectricsData = self.GetRows(uuid)
-            isHost = False
-            self.Send(uuid, mectricsData, isHost)
-
-    def Disconnect(self):
-        self.LogVerbose('Disnnecting: %s on %s' % (self.user, self.url))
-        self.session.logout()
-
-    def LogVerbose(self, msg):
+    def _LogVerbose(self, msg):
         if not self.verbose:
             return
         collectd.info('xenserver-collectd [verbose]: %s' % msg)
 
+
 # Hooks
 xenserverCollectd = XenServerCollectd()
-collectd.register_config(xenserverCollectd.SetConfig)
+collectd.register_config(xenserverCollectd.Config)
 collectd.register_init(xenserverCollectd.Connect)
-collectd.register_read(xenserverCollectd.Cycle)
-collectd.register_shutdown(xenserverCollectd.Disconnect)
+collectd.register_read(xenserverCollectd.Read)
+collectd.register_shutdown(xenserverCollectd.Shutdown)
