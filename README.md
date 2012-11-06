@@ -46,7 +46,7 @@ The plugin has some mandatory configuration options. This is done by passing par
                     User "root"
                     Password "mysecretpassword"
               </Host>
-              <Host "10.0.0.101">>
+              <Host "10.0.0.101">
                     User "root"
                     Password "mysecretpassword"
               </Host>
