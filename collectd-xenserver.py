@@ -204,7 +204,7 @@ class GetRRDUdpates:
 class XenServerCollectd:
     def __init__(self):
         self.hosts = {}
-        self.verbose = True
+        self.verbose = False
         self.graphHost = True
         self.rrdParams = {}
         self.rrdParams['cf'] = "AVERAGE"
