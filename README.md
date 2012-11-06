@@ -42,9 +42,14 @@ The plugin has some mandatory configuration options. This is done by passing par
         Interactive false
         Import "collectd-xenserver"
         <Module "collectd-xenserver">
-              Host "10.0.0.100"
-              User "root"
-              Password "mysecretpassword"
+              <Host "10.0.0.100">
+                    User "root"
+                    Password "mysecretpassword"
+              </Host>
+              <Host "10.0.0.101">>
+                    User "root"
+                    Password "mysecretpassword"
+              </Host>
         </Module>
   </Plugin>
 ```
