@@ -8,7 +8,7 @@ A Collectd plugin to monitor Citrix XenServer
 This is a module for collectd. It try to fetch the last metrics from a Citrix Xenserver
 host and the VMs running on it. This is done by fetching and parsing a xml on the server:
 
-http://<username>:<password>@<host>/rrd_updates?start=<secondssinceepoch>&host=true
+http://$username:$password@$host/rrd_updates?start=<secondssinceepoch>&host=true
 
 For more informations about this API, see the Citrix documentation here:
 
