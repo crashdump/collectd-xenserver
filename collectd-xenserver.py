@@ -36,7 +36,7 @@ collectd.conf example:
 __author__ = "Adrien Pujol - http://www.crashdump.fr/"
 __copyright__ = "Copyright 2012, Adrien Pujol"
 __license__ = "GPL"
-__version__ = "0.4"
+__version__ = "0.3c"
 __email__ = "adrien.pujol@crashdump.fr"
 __status__ = "Development"
 
@@ -213,7 +213,7 @@ class GetRRDUdpates:
 class XenServerCollectd:
     def __init__(self):
         self.hosts = {}
-        self.verbose = False
+        self.verbose = False # Set to true to make your logs really fat
         self.graphHost = True
         self.rrdParams = {}
         self.rrdParams['cf'] = "AVERAGE"
@@ -221,18 +221,30 @@ class XenServerCollectd:
         self.rrdParams['interval'] = 5
 
 
-    def Connect(self):
-        for hostname in self.hosts.keys():
+    def Connect(self, hostname=''):
+        ''' This is called at the startup of Collectd '''
+        # Called at startup
+        if hostname == '':
+            for hostname in self.hosts.keys():
+                url    = self.hosts[hostname]['url']
+                user   = self.hosts[hostname]['user']
+                passwd = self.hosts[hostname]['passwd']
+                self.hosts[hostname]['rrdupdates'] = GetRRDUdpates()
+                self.hosts[hostname]['session'] = XenAPI.Session(url)
+                self.hosts[hostname]['session'].xenapi.login_with_password(user, passwd)
+                self._LogVerbose('Connecting: %s on %s' % (user, url))
+        # If hostname is set, then we just need to reconnect a specific host
+        else:
             url    = self.hosts[hostname]['url']
             user   = self.hosts[hostname]['user']
-            passwd = self.hosts[hostname]['passwd']
-            #
-            self._LogVerbose('Connecting: %s on %s' % (user, url))
+            passwd = self.hosts[setname]['passwd']
             self.hosts[hostname]['rrdupdates'] = GetRRDUdpates()
             self.hosts[hostname]['session'] = XenAPI.Session(url)
             self.hosts[hostname]['session'].xenapi.login_with_password(user, passwd)
+            self._LogVerbose('Reconnecting: %s on %s' % (user, url))
 
     def Config(self, conf):
+        ''' Set the config dictionary hosts[hostname] = {'url': ..,'user': .., 'passwd': ..}  from collectd.conf'''
         if len(conf.children) == 0:
             collectd.error('Module configuration missing')
         #
@@ -251,28 +263,38 @@ class XenServerCollectd:
             self._LogVerbose('Reading new host from config: %s => %s' % (hostname, self.hosts[hostname]))
 
     def Read(self):
+        ''' This is called by Collectd every $Interval seconds '''
         for hostname in self.hosts.keys():
+            # If the connection is gone, reconnect
+            if self.hosts[hostname]['session'] is None:
+                self.Connect(hostname)
+
             self._LogVerbose('Read(): %s' % self.hosts[hostname]['url'] )
+            # Fetch the new http://hostname/rrd_update?.. and parse the new data
             self.hosts[hostname]['rrdupdates'].Refresh(self.hosts[hostname]['session'].handle, self.rrdParams, self.hosts[hostname]['url'])
 
+            # If the option is set, process the host mectrics data
             if self.graphHost:
                 isHost = True
                 uuid = self.hosts[hostname]['rrdupdates'].GetHostUUID()
                 mectricsData = self._GetRows(hostname, uuid, isHost)
                 self._ToCollectd(hostname, uuid, mectricsData, isHost)
 
+            # Process all row w've found so far for each vm
             for uuid in self.hosts[hostname]['rrdupdates'].GetVMList():
                 isHost = False
                 mectricsData = self._GetRows(hostname, uuid, isHost)
                 self._ToCollectd(hostname, uuid, mectricsData, isHost)
 
     def Shutdown(self):
+        ''' Disconnect all the active sessions - This is called by Collectd on SIGTERM '''
         for hostname in self.hosts.keys():
             self._LogVerbose('Disconnecting %s ' % hostname)
             self.hosts[hostname]['session'].logout()
 
 
     def _ToCollectd(self, hostname, uuid, metricsData, isHost):
+        ''' This is where the metrics are sent to Collectd '''
         if isHost:
             vmid = 'host-%s' % uuid
         else:
@@ -311,6 +333,7 @@ class XenServerCollectd:
         return result
 
     def _LogVerbose(self, msg):
+        ''' Be verbose, if self.verbose is True'''
         if not self.verbose:
             return
         collectd.info('xenserver-collectd [verbose]: %s' % msg)
