@@ -36,7 +36,7 @@ collectd.conf example:
 __author__ = "Adrien Pujol - http://www.crashdump.fr/"
 __copyright__ = "Copyright 2012, Adrien Pujol"
 __license__ = "GPL"
-__version__ = "0.3"
+__version__ = "0.4"
 __email__ = "adrien.pujol@crashdump.fr"
 __status__ = "Development"
 
@@ -66,11 +66,10 @@ class GetRRDUdpates:
     def __init__(self):
         # rrdParams are what get passed to the CGI executable in the URL
         self.rrdParams = dict()
-        self.rrdParams['start'] = int(time.time()) - 1000
+        self.rrdParams['start'] = int(time.time()) - 10
         self.rrdParams['host'] = 'true'   # include data for host (as well as for VMs)
         self.rrdParams['cf'] = 'AVERAGE'  # consolidation function, each sample averages 12 from the 5 second RRD
         self.rrdParams['interval'] = '10'
-        self.rrdParams['output'] = 'collectd'
 
     def GetRows(self):
         return self.rows
@@ -83,6 +82,11 @@ class GetRRDUdpates:
         if not report:
             return []
         return report.keys()
+
+    def GetVMData(self, uuid, param, row):
+        report = self.vm_reports[uuid]
+        col = report[param]
+        return self.__lookup_data(col, row)
 
     def GetHostUUID(self):
         report = self.host_report
@@ -126,13 +130,18 @@ class GetRRDUdpates:
         rrdParamstr = "&".join(["%s=%s"  % (k,rrdParams[k]) for k in rrdParams])
         url = "%s/rrd_updates?%s" % (server, rrdParamstr)
 
-        if rrdParams['output'] == "shell":
-            print "Query: %s" % url
+        #print "Query: %s" % url
+
         # this is better than urllib.urlopen() as it raises an Exception on http 401 'Unauthorised' error
         # rather than drop into interactive mode
         sock = urllib.URLopener().open(url)
         xmlsource = sock.read()
         sock.close()
+
+        #myFile = open('debug.xml','w')
+        #myFile.write(xmlsource)
+        #myFile.close()
+
         xmldoc = minidom.parseString(xmlsource)
         self.__parse_xmldoc(xmldoc)
         # Update the time used on the next run
@@ -247,14 +256,14 @@ class XenServerCollectd:
             self.hosts[hostname]['rrdupdates'].Refresh(self.hosts[hostname]['session'].handle, self.rrdParams, self.hosts[hostname]['url'])
 
             if self.graphHost:
-                uuid = self.hosts[hostname]['rrdupdates'].GetHostUUID()
-                mectricsData = self._GetRows(hostname, uuid)
                 isHost = True
+                uuid = self.hosts[hostname]['rrdupdates'].GetHostUUID()
+                mectricsData = self._GetRows(hostname, uuid, isHost)
                 self._ToCollectd(hostname, uuid, mectricsData, isHost)
 
             for uuid in self.hosts[hostname]['rrdupdates'].GetVMList():
-                mectricsData = self._GetRows(hostname, uuid)
                 isHost = False
+                mectricsData = self._GetRows(hostname, uuid, isHost)
                 self._ToCollectd(hostname, uuid, mectricsData, isHost)
 
     def Shutdown(self):
@@ -265,33 +274,40 @@ class XenServerCollectd:
 
     def _ToCollectd(self, hostname, uuid, metricsData, isHost):
         if isHost:
-            name = 'xenserver-host-%s' % uuid
+            vmid = 'host-%s' % uuid
         else:
-            name = 'xenserver-vm-%s' % uuid
+            vmid = 'vm-%s' % uuid
 
         for key, value in metricsData.iteritems():
-            cltd = collectd.Values();
-            cltd.plugin = 'collectd-xenserver'
-            cltd.host = name
-            cltd.type_instance = key
-            cltd.type = 'gauge' # http://linux.die.net/man/5/types.db
+            cltd = collectd.Values(type = 'gauge');
+            # naming: host "/" plugin ["-" plugin instance] "/" type ["-" type instance]
+            cltd.host = 'xenservers' # xenservers/
+            cltd.plugin = vmid # vm-29887edd-6f21-d936-53e5-b4cb2bac3ba0/
+            cltd.type_instance = key # cpu0
             cltd.values = [ value ]
-            self._LogVerbose('Dispatching %s: %s.%s %s' % (hostname, name, key, value))
             cltd.dispatch()
+            self._LogVerbose('Dispatch() data from %s: %s/%s/%s/%s' % (hostname, cltd.host, cltd.plugin, cltd.type_instance, value))
 
-    def _GetRows(self, hostname, uuid):
+    def _GetRows(self, hostname, uuid, isHost):
         result = {}
-        for param in self.hosts[hostname]['rrdupdates'].GetHostParamList():
-                if param != '':
-                    max_time=0
-                    data=''
-                    for row in range(self.hosts[hostname]['rrdupdates'].GetRows()):
-                        epoch = self.hosts[hostname]['rrdupdates'].GetRowTime(row)
+        if isHost:
+            paramList = self.hosts[hostname]['rrdupdates'].GetHostParamList()
+        else:
+            paramList = self.hosts[hostname]['rrdupdates'].GetVMParamList(uuid)
+        for param in paramList:
+            if param != '':
+                max_time=0
+                data=''
+                for row in range(self.hosts[hostname]['rrdupdates'].GetRows()):
+                    epoch = self.hosts[hostname]['rrdupdates'].GetRowTime(row)
+                    if isHost:
                         dv = str(self.hosts[hostname]['rrdupdates'].GetHostData(param,row))
-                        if epoch > max_time:
-                            max_time = epoch
-                            data = dv
-                    result[param] = data
+                    else:
+                        dv = str(self.hosts[hostname]['rrdupdates'].GetVMData(uuid,param,row))
+                    if epoch > max_time:
+                        max_time = epoch
+                        data = dv
+                result[param] = data
         return result
 
     def _LogVerbose(self, msg):
