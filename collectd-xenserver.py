@@ -215,6 +215,8 @@ class XenServerCollectd:
         self.hosts = {}
         self.verbose = False # Set to true to make your logs really fat
         self.graphHost = True
+        self.xApiIterCpt = 0
+        self.xApiDefaultIterCpt = 60 # Reconnect the API every X polls
         self.rrdParams = {}
         self.rrdParams['cf'] = "AVERAGE"
         self.rrdParams['start'] = int(time.time()) - 10
@@ -268,6 +270,13 @@ class XenServerCollectd:
             # If the connection is gone, reconnect
             if self.hosts[hostname]['session'] is None:
                 self.Connect(hostname)
+
+            # Dirt fix: Reconnect every x reads to prevent unhandled api session timeout.
+            self.xApiIterCpt += 1
+            if self.xApiIterCpt > self.xApiDefaultIterCpt:
+                self.Shutdown()
+                self.Connect()
+                self.xApiReconnect = 0
 
             self._LogVerbose('Read(): %s' % self.hosts[hostname]['url'] )
             # Fetch the new http://hostname/rrd_update?.. and parse the new data
