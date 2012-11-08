@@ -9,6 +9,8 @@ http://<username>:<password>@<host>/rrd_updates?start=<secondssinceepoch>&host=t
 For more informations about this API, see the Citrix documentation here:
 
 http://docs.vmd.citrix.com/XenServer/6.1.0/1.0/en_gb/sdk.html#persistent_perf_stats
+http://wiki.xensource.com/xenwiki/XAPI_RRDs
+http://community.citrix.com/display/xs/Using+XenServer+RRDs
 
 Dependencies:
   - XenAPI python module: http://pypi.python.org/pypi/XenAPI
@@ -36,7 +38,7 @@ collectd.conf example:
 __author__ = "Adrien Pujol - http://www.crashdump.fr/"
 __copyright__ = "Copyright 2012, Adrien Pujol"
 __license__ = "GPL"
-__version__ = "0.3c"
+__version__ = "0.3d"
 __email__ = "adrien.pujol@crashdump.fr"
 __status__ = "Development"
 
@@ -276,7 +278,7 @@ class XenServerCollectd:
             if self.xApiIterCpt > self.xApiDefaultIterCpt:
                 self.Shutdown()
                 self.Connect()
-                self.xApiReconnect = 0
+                self.xApiIterCpt = 0
 
             self._LogVerbose('Read(): %s' % self.hosts[hostname]['url'] )
             # Fetch the new http://hostname/rrd_update?.. and parse the new data
