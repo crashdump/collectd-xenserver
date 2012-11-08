@@ -53,3 +53,8 @@ The plugin has some mandatory configuration options. This is done by passing par
         </Module>
   </Plugin>
 ```
+
+XenApi/rrd_updates
+------------------
+http://wiki.xensource.com/xenwiki/XAPI_RRDs
+http://community.citrix.com/display/xs/Using+XenServer+RRDs
